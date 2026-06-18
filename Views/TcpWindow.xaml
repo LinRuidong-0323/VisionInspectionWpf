@@ -1,0 +1,104 @@
+<Window x:Class="VisionInspection.Views.TcpWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TCP 通讯" Height="650" Width="900"
+        WindowStartupLocation="CenterOwner" MinHeight="500" MinWidth="700"
+        Closed="Window_Closed">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Row 0: 基本配置 + 启动/停止 -->
+        <Border Grid.Row="0" Padding="10,8" Background="#F8F8F8" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1">
+            <StackPanel>
+            <WrapPanel>
+                <TextBlock Text="角色:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                <ComboBox Name="CmbRole" Width="80" Margin="0,0,14,0" SelectedIndex="0">
+                    <ComboBoxItem Content="Server"/><ComboBoxItem Content="Client"/>
+                </ComboBox>
+
+                <TextBlock Text="IP:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                <TextBox Name="TxtIp" Width="110" Text="127.0.0.1" Margin="0,0,14,0"/>
+
+                <TextBlock Text="端口:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                <TextBox Name="TxtPort" Width="60" Text="2000" Margin="0,0,14,0"/>
+
+                <TextBlock Text="编码:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                <ComboBox Name="CmbEncoding" Width="70" Margin="0,0,14,0" SelectedIndex="0">
+                    <ComboBoxItem Content="ASCII"/><ComboBoxItem Content="UTF8"/><ComboBoxItem Content="HEX"/>
+                </ComboBox>
+
+                <Button Name="BtnStart" Content="▶ 启动" Width="70" Click="BtnStart_Click"
+                        Background="#28A745" Foreground="White" FontWeight="Bold" Margin="0,0,8,0"/>
+                <Button Name="BtnStop" Content="⏹ 停止" Width="70" Click="BtnStop_Click"
+                        IsEnabled="False" Background="#DC3545" Foreground="White"/>
+
+                <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="8,0"/>
+
+                <CheckBox Name="ChkAutoReply" Content="自动回复" VerticalAlignment="Center" Margin="8,0,4,0" Checked="ChkAutoReply_Changed" Unchecked="ChkAutoReply_Changed"/>
+                <TextBox Name="TxtAutoReply" Width="100" Text="{}{Result}" Margin="0,0,8,0" ToolTip="回复内容，支持 {变量名}"/>
+
+                <CheckBox Name="ChkAutoReconnect" Content="自动重连" VerticalAlignment="Center" Margin="4,0,4,0"/>
+                <TextBlock Text="间隔(s)" VerticalAlignment="Center" FontSize="10" Margin="2,0,2,0"/>
+                <TextBox Name="TxtReconnectInterval" Width="40" Text="5" Margin="0,0,8,0"/>
+                <TextBlock Text="最大次数" VerticalAlignment="Center" FontSize="10" Margin="2,0,2,0"/>
+                <TextBox Name="TxtReconnectMax" Width="40" Text="3" Margin="0,0,8,0"/>
+
+                <!-- 高级设置折叠按钮 -->
+                <Button Name="BtnAdvanced" Content="▸ 高级" Width="60" Click="BtnAdvanced_Click"
+                        Background="Transparent" BorderThickness="0" Foreground="#666" Margin="4,0,0,0"/>
+            </WrapPanel>
+
+            <!-- 高级设置面板（默认隐藏） -->
+            <StackPanel Name="PanelAdvanced" Visibility="Collapsed" Margin="0,8,0,0">
+                <WrapPanel Margin="0,4,0,0">
+                    <TextBlock Text="字节序:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <ComboBox Name="CmbByteOrder" Width="100" Margin="0,0,14,0" SelectedIndex="0">
+                        <ComboBoxItem Content="BigEndian"/><ComboBoxItem Content="LittleEndian"/>
+                    </ComboBox>
+                    <TextBlock Text="超时(ms):" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBox Name="TxtTimeout" Width="60" Text="3000" Margin="0,0,14,0"/>
+                    <TextBlock Text="起始符(Hex):" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBox Name="TxtStartDelim" Width="60" Margin="0,0,14,0"/>
+                    <TextBlock Text="结束符(Hex):" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBox Name="TxtEndDelim" Width="60" Margin="0,0,14,0"/>
+                    <TextBlock Text="分隔符:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBox Name="TxtSeparator" Width="60"/>
+                </WrapPanel>
+            </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Row 1: 发送区 -->
+        <DockPanel Grid.Row="1" Margin="10,6,10,4">
+            <Button Name="BtnSend" Content="发送" Width="60" DockPanel.Dock="Right" Click="BtnSend_Click"
+                    Background="#0078D7" Foreground="White"/>
+            <TextBox Name="TxtSend" Height="28" KeyDown="TxtSend_KeyDown"/>
+        </DockPanel>
+
+        <!-- Row 2: 收发记录 -->
+        <DataGrid Name="GridLog" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" FontSize="11" RowHeight="20" Margin="10,0,10,4">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="时间" Width="120" Binding="{Binding Time}"/>
+                <DataGridTextColumn Header="方向" Width="55" Binding="{Binding Direction}"/>
+                <DataGridTextColumn Header="HEX" Width="240" Binding="{Binding Hex}"/>
+                <DataGridTextColumn Header="ASCII/文本" Width="*" Binding="{Binding Ascii}"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Row 3: 详细日志 -->
+        <DockPanel Grid.Row="3" Margin="10,4,10,10">
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,4">
+                <Button Content="清空记录" Width="80" Height="26" Click="BtnClear_Click"/>
+            </StackPanel>
+            <TextBox Name="TxtDetail" IsReadOnly="True" FontFamily="Consolas" FontSize="10"
+                     VerticalScrollBarVisibility="Auto" Background="White" Foreground="#333"/>
+        </DockPanel>
+    </Grid>
+</Window>
