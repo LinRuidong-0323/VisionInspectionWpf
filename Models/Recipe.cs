@@ -38,7 +38,7 @@ namespace VisionInspection.Models
             get
             {
                 if (VppFiles.Count > 0)
-                    return VppFiles[0];
+                    return Path.Combine(FolderPath, VppFiles[0]);
                 return Path.Combine(FolderPath, "DefaultJob.vpp");
             }
         }

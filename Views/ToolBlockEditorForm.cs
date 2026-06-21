@@ -19,6 +19,9 @@ namespace VisionInspection.Views
         /// <summary>获取保存回调中的当前作业名</summary>
         public System.Func<string> GetJobNameCallback { get; set; }
 
+        /// <summary>不保存回调：从磁盘重新加载 VPP，丢弃内存修改</summary>
+        public System.Action DiscardCallback { get; set; }
+
         public ToolBlockEditorForm(
             Cognex.VisionPro.ToolBlock.CogToolBlock toolBlock,
             Cognex.VisionPro.ToolBlock.CogToolBlockEditV2 existingEditor = null)
@@ -82,7 +85,8 @@ namespace VisionInspection.Views
                     }
                     else if (result == DialogResult.No)
                     {
-                        System.Diagnostics.Debug.WriteLine("VPP 编辑器关闭（用户选择不保存）");
+                        // 不保存 → 触发回调从磁盘重新加载，丢弃内存修改
+                        DiscardCallback?.Invoke();
                         this.Hide();
                         e.Cancel = true;
                     }

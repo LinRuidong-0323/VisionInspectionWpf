@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Forms.Integration;
+using System.Windows.Media;
 using Cognex.VisionPro;
 using Cognex.VisionPro.Display;
 using VisionInspection.Data;
@@ -38,12 +41,16 @@ namespace VisionInspection.Views
         // ============ 日志 ============
         private ObservableCollection<LogRow> _logRows = new ObservableCollection<LogRow>();
         private bool _logPaused;
-        private bool _filterInfo = true, _filterWarn = true, _filterError = true;
+        private bool _filterInfo = true, _filterWarn = true, _filterError = true, _filterDebug = false;
+        private bool _saveImageEnabled = true;
+        private bool _saveRawImage = true;
 
         // ============ 状态 ============
         private bool _isRunning;
+        private bool _folderFirstRun = true; // 文件夹模式下，第一次运行不切图
         private string _lastImagePath;
         private string _lastFolderPath;
+        private readonly List<string> _notifications = new List<string>();
         private System.Timers.Timer _lockTimer;
 
         // ================================================================
@@ -52,9 +59,12 @@ namespace VisionInspection.Views
         public MainWindow()
         {
             InitializeComponent();
-            _appSettings = new AppSettings();
+            LoadAppSettings();
             InitializeServices();
             WireEvents();
+            _saveImageEnabled = _appSettings.ImageSaveEnabled;
+            _saveRawImage = _appSettings.RawImageEnabled;
+            RunCleanup(); // 启动时执行一次清理
         }
 
         // ================================================================
@@ -147,6 +157,9 @@ namespace VisionInspection.Views
             {
                 if (!_logPaused && PassLogFilter(entry))
                     Dispatcher.BeginInvoke(new Action(() => AddLogRow(entry)));
+                // 错误级别自动进通知中心
+                if (entry.Level == LogLevel.ERROR)
+                    Dispatcher.BeginInvoke(new Action(() => AddNotification(entry.Message)));
             };
 
             // 日志筛选
@@ -156,6 +169,8 @@ namespace VisionInspection.Views
             ChkLogWarn.Unchecked += (s, e) => { _filterWarn = false; RefreshLogFilter(); };
             ChkLogError.Checked += (s, e) => { _filterError = true; RefreshLogFilter(); };
             ChkLogError.Unchecked += (s, e) => { _filterError = false; RefreshLogFilter(); };
+            ChkLogDebug.Checked += (s, e) => { _filterDebug = true; RefreshLogFilter(); };
+            ChkLogDebug.Unchecked += (s, e) => { _filterDebug = false; RefreshLogFilter(); };
 
             // 系统监控
             _systemMonitor.OnDataRefreshed += () =>
@@ -219,6 +234,9 @@ namespace VisionInspection.Views
             SetupEditorCallbacks();
             _editorForm.Hide();
 
+            // 恢复上次使用的配方（若存在）
+            _recipeService.RestoreFromSettings(_appSettings.CurrentRecipe);
+
             // 加载默认 VPP
             string vppPath = _recipeService.EnsureDefaultVpp();
             _visionService.EnsureDefaultJob(vppPath);
@@ -260,11 +278,13 @@ namespace VisionInspection.Views
         private void MenuStop_Click(object s, RoutedEventArgs e) => StopContinuousRun();
         private void MenuToolEditor_Click(object s, RoutedEventArgs e) => OpenToolBlockEditor();
         private void MenuVarMonitor_Click(object s, RoutedEventArgs e) => ShowVarMonitor();
+        private void MenuResultViewer_Click(object s, RoutedEventArgs e) => ShowResultViewer();
         private void MenuRecipeNew_Click(object s, RoutedEventArgs e) => NewRecipe();
         private void MenuRecipeCopy_Click(object s, RoutedEventArgs e) => CopyRecipe();
         private void MenuRecipeRename_Click(object s, RoutedEventArgs e) => RenameRecipe();
         private void MenuRecipeSwitch_Click(object s, RoutedEventArgs e) => SwitchRecipe();
         private void MenuTcpOpen_Click(object s, RoutedEventArgs e) => OpenTcp();
+        private void MenuSerialOpen_Click(object s, RoutedEventArgs e) => OpenSerial();
         private void MenuUserLogin_Click(object s, RoutedEventArgs e) => ShowLoginDialog();
         private void MenuUserLogout_Click(object s, RoutedEventArgs e) => Logout();
         private void MenuUserLock_Click(object s, RoutedEventArgs e)
@@ -273,6 +293,96 @@ namespace VisionInspection.Views
             ShowUnlockDialog();
         }
         private void MenuUserChPwd_Click(object s, RoutedEventArgs e) => ChangePassword();
+        private void MenuOperatorView_Click(object s, RoutedEventArgs e) => ShowOperatorView();
+        private void MenuSettings_Click(object s, RoutedEventArgs e)
+        {
+            var dlg = new SettingsWindow(_appSettings) { Owner = this };
+            if (dlg.ShowDialog() == true)
+            {
+                // 同步存图开关
+                _saveImageEnabled = _appSettings.ImageSaveEnabled;
+                _saveRawImage = _appSettings.RawImageEnabled;
+                // 更新日志服务保留天数
+                _logService.UpdateRetention(_appSettings.LogRetentionDays, _appSettings.LogMaxFileSizeMB);
+                // 持久化设置
+                SaveAppSettings();
+                // 执行一次图片和日志清理
+                RunCleanup();
+                _logService?.Info(LogCategory.SETTING, "System", "系统设置已更新");
+            }
+        }
+
+        private string AppSettingsPath =>
+            System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Config", "app_settings.json");
+
+        private void LoadAppSettings()
+        {
+            try
+            {
+                string path = AppSettingsPath;
+                if (System.IO.File.Exists(path))
+                {
+                    string json = System.IO.File.ReadAllText(path, System.Text.Encoding.UTF8);
+                    _appSettings = Newtonsoft.Json.JsonConvert.DeserializeObject<AppSettings>(json) ?? new AppSettings();
+                }
+                else
+                {
+                    _appSettings = new AppSettings();
+                }
+            }
+            catch { _appSettings = new AppSettings(); }
+        }
+
+        private void SaveAppSettings()
+        {
+            try
+            {
+                string path = AppSettingsPath;
+                string dir = System.IO.Path.GetDirectoryName(path);
+                if (!System.IO.Directory.Exists(dir))
+                    System.IO.Directory.CreateDirectory(dir);
+                string json = Newtonsoft.Json.JsonConvert.SerializeObject(_appSettings, Newtonsoft.Json.Formatting.Indented);
+                System.IO.File.WriteAllText(path, json, System.Text.Encoding.UTF8);
+            }
+            catch { }
+        }
+
+        private void RunCleanup()
+        {
+            string today = DateTime.Now.ToString("yyyy-MM-dd");
+
+            // 相机原图清理
+            if (_appSettings.RawImageRetentionDays > 0 && _appSettings.LastRawImageCleanupDate != today)
+            {
+                CleanOldFiles("RawImages", _appSettings.RawImageRetentionDays);
+                _appSettings.LastRawImageCleanupDate = today;
+            }
+            // 检测效果图清理
+            if (_appSettings.ImageRetentionDays > 0 && _appSettings.LastImageCleanupDate != today)
+            {
+                CleanOldFiles("ResultImages", _appSettings.ImageRetentionDays);
+                _appSettings.LastImageCleanupDate = today;
+            }
+            SaveAppSettings();
+            // 日志清理在 LogService 内部已处理
+        }
+
+        private void CleanOldFiles(string folderName, int retentionDays)
+        {
+            try
+            {
+                string dir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, folderName);
+                if (!System.IO.Directory.Exists(dir)) return;
+                var cutoff = DateTime.Now.AddDays(-retentionDays);
+                foreach (var file in System.IO.Directory.GetFiles(dir))
+                {
+                    if (System.IO.File.GetCreationTime(file) < cutoff)
+                        System.IO.File.Delete(file);
+                }
+            }
+            catch { }
+        }
+
         private void MenuHelpAbout_Click(object s, RoutedEventArgs e) =>
             MessageBox.Show("VisionInspection v1.0\n机器视觉检测系统\n基于 Cognex VisionPro 9.0\nWPF Edition\n\n(c) 2026", "关于",
                 MessageBoxButton.OK, MessageBoxImage.Information);
@@ -310,6 +420,7 @@ namespace VisionInspection.Views
             };
             if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK)
             {
+                _folderFirstRun = true;
                 _lastImagePath = System.IO.Path.GetDirectoryName(dlg.FileName);
                 _simImageService.LoadImageDirect(dlg.FileName);
                 _logService.Info(LogCategory.CAMERA, "System", "加载图片: " + dlg.FileName);
@@ -325,6 +436,7 @@ namespace VisionInspection.Views
             };
             if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK)
             {
+                _folderFirstRun = true;
                 _lastFolderPath = dlg.SelectedPath;
                 _simImageService.LoadImageSequence(dlg.SelectedPath);
             }
@@ -369,6 +481,54 @@ namespace VisionInspection.Views
         // ================================================================
         // 运行
         // ================================================================
+
+        /// <summary>
+        /// 从 CogRecordDisplay 截取当前显示画面（含 VPP 叠加图形），输出为 ICogImage
+        /// 必须在 UI 线程调用。失败时返回 null。
+        /// </summary>
+        private ICogImage CaptureResultImageWithOverlay()
+        {
+            try
+            {
+                if (_cogDisplay == null || !_cogDisplay.IsHandleCreated)
+                    return null;
+                var bmp = _cogDisplay.CreateContentBitmap(
+                    Cognex.VisionPro.Display.CogDisplayContentBitmapConstants.Image) as System.Drawing.Bitmap;
+                if (bmp != null)
+                    return new Cognex.VisionPro.CogImage24PlanarColor(bmp);
+            }
+            catch { }
+            return null;
+        }
+
+        private void SaveRawImageAsync(ICogImage image, string fileName)
+        {
+            var capturedImage = image;
+            var capturedFileName = fileName;
+            var format = _appSettings.RawImageFormat;
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    string rawDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RawImages");
+                    System.IO.Directory.CreateDirectory(rawDir);
+                    string time = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+                    string safeName = System.IO.Path.GetFileNameWithoutExtension(capturedFileName ?? "unknown");
+                    string ext = format;
+                    string savePath = System.IO.Path.Combine(rawDir,
+                        string.Format("{0}_{1}.{2}", time, safeName, ext));
+
+                    // 使用 CogImageFileTool 按指定格式保存
+                    var imgFile = new Cognex.VisionPro.ImageFile.CogImageFileTool();
+                    imgFile.Operator.Open(savePath, Cognex.VisionPro.ImageFile.CogImageFileModeConstants.Write);
+                    imgFile.InputImage = capturedImage;
+                    imgFile.Run();
+                    imgFile.Dispose();
+                }
+                catch { }
+            });
+        }
+
         private void RunOnce()
         {
             if (!_visionService.IsJobLoaded)
@@ -377,40 +537,67 @@ namespace VisionInspection.Views
                 return;
             }
 
-            if (_simImageService.CurrentImage != null)
-            {
-                _logService.Info(LogCategory.JOB, "System",
-                    string.Format("运行: {0} ({1}×{2})",
-                        _simImageService.CurrentFileName ?? "未知文件",
-                        _simImageService.CurrentImage.Width,
-                        _simImageService.CurrentImage.Height));
-                _visionService.SetInputImage(_simImageService.CurrentImage);
-            }
-            else
+            if (_simImageService.CurrentImage == null)
             {
                 _logService.Warn(LogCategory.JOB, "System", "RunOnce: 没有加载图片，请先打开图片");
                 ShowInfo("请先加载图片\n通过 文件→打开图片 或 图片文件夹");
                 return;
             }
 
-            var result = _visionService.RunOnce();
-            _resultService.RecordResult(result);
-            StsFrame.Text = string.Format("帧率: {0:F1} FPS", 1000.0 / Math.Max(result.CycleTimeMs, 1));
-            try
-            {
-                var runRecord = _visionService.GetLastRunRecord();
-                if (runRecord != null) _cogDisplay.Record = runRecord;
-                else if (_simImageService.CurrentImage != null) _cogDisplay.Image = _simImageService.CurrentImage;
-            }
-            catch { }
-            UpdateVppOutputDisplay(result);
-
-            // 图片文件夹模式：运行后自动切下一张
-            if (_simImageService.SourceType == ImageSourceType.ImageSequence ||
-                _simImageService.SourceType == ImageSourceType.VideoFile)
+            // 0. 文件夹模式：非首次运行时先切到下一张
+            bool isSeq = _simImageService.SourceType == ImageSourceType.ImageSequence ||
+                         _simImageService.SourceType == ImageSourceType.VideoFile;
+            if (isSeq && !_folderFirstRun)
             {
                 _simImageService.StepNext();
             }
+
+            // 1. 当前图 → VPP
+            _visionService.SetInputImage(_simImageService.CurrentImage);
+
+            // 2. 运行 VPP
+            var result = _visionService.RunOnce();
+            _resultService.RecordResult(result);
+            StsFrame.Text = string.Format("帧率: {0:F1} FPS", 1000.0 / Math.Max(result.CycleTimeMs, 1));
+
+            // 3. 显示结果（含叠加图形）
+            try
+            {
+                var runRecord = _visionService.GetLastRunRecord();
+                if (runRecord != null)
+                    _cogDisplay.Record = runRecord;
+            }
+            catch { }
+
+            UpdateVppOutputDisplay(result);
+
+            // 4. 异步存图
+            if (_saveRawImage && _simImageService.CurrentImage != null)
+                SaveRawImageAsync(_simImageService.CurrentImage, _simImageService.CurrentFileName ?? "unknown");
+            if (_saveImageEnabled)
+            {
+                var overlayImage = CaptureResultImageWithOverlay() ?? _simImageService.CurrentImage;
+                ResultImageViewer.SaveResultImage(overlayImage,
+                    result.VerdictDisplay, _simImageService.CurrentFileName ?? "unknown");
+            }
+
+            // 5. 刷新操作员窗口
+            var lastRecord = _visionService.GetLastRunRecord();
+            if (_operatorDisplay != null)
+            {
+                try
+                {
+                    if (lastRecord != null)
+                        _operatorDisplay.Record = lastRecord;
+                    else if (_simImageService.CurrentImage != null)
+                        _operatorDisplay.Image = _simImageService.CurrentImage;
+                }
+                catch { }
+            }
+
+            // 6. 标记：下次点击会先执行 StepNext（在 SetInputImage 之前）
+            if (isSeq)
+                _folderFirstRun = false;
         }
 
         private System.Windows.Threading.DispatcherTimer _runTimer;
@@ -456,41 +643,43 @@ namespace VisionInspection.Views
         {
             if (!_isRunning || !_visionService.IsJobLoaded) return;
 
-            // 记录当前处理的图片信息
-            _runCount++;
-            string imgInfo = string.Format("[第{0}次] {1} | {2}×{3} | SourceType={4}",
-                _runCount,
-                _simImageService.CurrentFileName ?? "未知",
-                _simImageService.CurrentImage?.Width ?? 0,
-                _simImageService.CurrentImage?.Height ?? 0,
-                _simImageService.SourceType);
-            _logService.Info(LogCategory.JOB, "System", "连续运行 " + imgInfo);
+            if (_simImageService.CurrentImage == null) return;
 
-            if (_simImageService.CurrentImage != null)
-                _visionService.SetInputImage(_simImageService.CurrentImage);
+            // 1. 当前图 → VPP
+            _visionService.SetInputImage(_simImageService.CurrentImage);
 
+            // 2. 运行 VPP
             var result = _visionService.RunOnce();
             _resultService.RecordResult(result);
+            _runCount++;
 
             StsFrame.Text = string.Format("帧率: {0:F1} FPS", 1000.0 / Math.Max(result.CycleTimeMs, 1));
             UpdateVppOutputDisplay(result);
+
+            // 3. 显示结果（含叠加图形）
             try
             {
                 var record = _visionService.GetLastRunRecord();
-                if (record != null) _cogDisplay.Record = record;
-                else if (_simImageService.CurrentImage != null)
-                    _cogDisplay.Image = _simImageService.CurrentImage;
+                if (record != null)
+                    _cogDisplay.Record = record;
             }
             catch { }
 
-            // 图片文件夹模式：运行后切下一张，并刷新显示
+            // 4. 异步存图
+            if (_saveRawImage && _simImageService.CurrentImage != null)
+                SaveRawImageAsync(_simImageService.CurrentImage, _simImageService.CurrentFileName ?? "unknown");
+            if (_saveImageEnabled)
+            {
+                var overlayImage = CaptureResultImageWithOverlay() ?? _simImageService.CurrentImage;
+                ResultImageViewer.SaveResultImage(overlayImage,
+                    result.VerdictDisplay, _simImageService.CurrentFileName ?? "unknown");
+            }
+
+            // 5. 文件夹/序列模式：切到下一张（自动循环），下次 Timer 处理新图
             if (_simImageService.SourceType == ImageSourceType.ImageSequence ||
                 _simImageService.SourceType == ImageSourceType.VideoFile)
             {
                 _simImageService.StepNext();
-                // 新图立即显示
-                if (_simImageService.CurrentImage != null)
-                    _cogDisplay.Image = _simImageService.CurrentImage;
             }
         }
 
@@ -545,6 +734,9 @@ namespace VisionInspection.Views
             {
                 if (_recipeService.SwitchRecipe(sel))
                 {
+                    // 记住当前配方，下次启动自动恢复
+                    _appSettings.CurrentRecipe = sel;
+                    SaveAppSettings();
                     string vppPath = _recipeService.CurrentVppPath;
                     if (File.Exists(vppPath))
                         _visionService.LoadJob(vppPath);
@@ -568,6 +760,13 @@ namespace VisionInspection.Views
         // ================================================================
         // 通讯
         // ================================================================
+        private void OpenSerial()
+        {
+            var win = new SerialWindow();
+            win.Owner = this;
+            win.Show();
+        }
+
         private void OpenTcp()
         {
             if (_tcpWindow == null || !_tcpWindow.IsLoaded)
@@ -704,6 +903,17 @@ namespace VisionInspection.Views
                 return false;
             };
             _editorForm.GetJobNameCallback = () => _visionService.CurrentJobName;
+
+            _editorForm.DiscardCallback = () =>
+            {
+                // 从磁盘重新加载 VPP，丢弃内存中的修改
+                string vppPath = _visionService.CurrentJobPath;
+                if (!string.IsNullOrEmpty(vppPath) && File.Exists(vppPath))
+                {
+                    _visionService.LoadJob(vppPath);
+                    _logService.Info(LogCategory.JOB, "System", "已从磁盘重新加载作业（修改已丢弃）: " + vppPath);
+                }
+            };
         }
 
         private void OpenToolBlockEditor()
@@ -790,6 +1000,8 @@ namespace VisionInspection.Views
         // ================================================================
         private bool PassLogFilter(LogEntry entry)
         {
+            // DEBUG 默认不显示，只有勾选"调试"才显示
+            if (entry.Level == LogLevel.DEBUG) return _filterDebug;
             if (entry.Level == LogLevel.ERROR && !_filterError) return false;
             if (entry.Level == LogLevel.WARN && !_filterWarn) return false;
             if (entry.Level == LogLevel.INFO && !_filterInfo) return false;
@@ -827,27 +1039,174 @@ namespace VisionInspection.Views
         // ================================================================
         private void UpdateVppOutputDisplay(InspectionResult result)
         {
-            // VPP 输出变量写入日志
+            // VPP 输出变量 → 调试级别
             if (result.Variables != null && result.Variables.Count > 0)
             {
                 foreach (var kv in result.Variables)
                 {
                     string val = kv.Value?.ToString() ?? "null";
-                    _logService.Info(LogCategory.JOB, "System",
+                    _logService.Debug(LogCategory.JOB, "System",
                         string.Format("输出 [{0}] = {1}", kv.Key, val));
                 }
             }
-            // VPP 报错写入日志
+            // VPP 报错 → 错误级别
             if (result.ErrorMessages != null)
             {
                 foreach (var err in result.ErrorMessages)
                     _logService.Error(LogCategory.JOB, "System", err);
             }
-            // 写入判定结果
+            // 判定结果 → 信息级别（生产数据）
             _logService.Info(LogCategory.JOB, "System",
-                string.Format("判定: {0}  耗时: {1:F1}ms  文件: {2}",
+                string.Format("判定: {0} 耗时: {1:F0}ms {2}",
                 result.VerdictDisplay, result.CycleTimeMs,
                 _simImageService.CurrentFileName ?? "--"));
+        }
+
+        // ================================================================
+        // 检测效果图
+        // ================================================================
+        private void ShowResultViewer()
+        {
+            var viewer = new ResultImageViewer();
+            viewer.Owner = this;
+            viewer.Show();
+        }
+
+        // ================================================================
+        // 异常通知
+        // ================================================================
+        private void AddNotification(string msg)
+        {
+            _notifications.Insert(0,
+                string.Format("[{0:HH:mm:ss}] {1}", DateTime.Now, msg));
+            while (_notifications.Count > 50) _notifications.RemoveAt(_notifications.Count - 1);
+            BtnNotify.Foreground = Brushes.Red;
+            BtnNotify.ToolTip = string.Format("{0} 条异常", _notifications.Count);
+        }
+
+        private void BtnNotify_Click(object s, RoutedEventArgs e)
+        {
+            BtnNotify.Foreground = new SolidColorBrush(Color.FromRgb(135, 206, 235));
+            // 弹出通知窗口
+            var win = new Window
+            {
+                Title = "异常通知中心",
+                Owner = this,
+                Width = 500, Height = 350,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                WindowStyle = WindowStyle.ToolWindow
+            };
+            var grid = new Grid { Margin = new Thickness(8) };
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var listBox = new ListBox { FontSize = 11 };
+            foreach (var n in _notifications) listBox.Items.Add(n);
+            Grid.SetRow(listBox, 0);
+
+            var btnClear = new Button { Content = "清除", Height = 26, Width = 60, HorizontalAlignment = HorizontalAlignment.Right };
+            btnClear.Click += (s2, ev2) => { _notifications.Clear(); BtnNotify.Visibility = Visibility.Collapsed; win.Close(); };
+            Grid.SetRow(btnClear, 1);
+
+            grid.Children.Add(listBox);
+            grid.Children.Add(btnClear);
+            win.Content = grid;
+            win.Show();
+        }
+
+        // ================================================================
+        // 自定义运行界面（操作员窗口）
+        // ================================================================
+        private CogRecordDisplay _operatorDisplay;
+
+        private void ShowOperatorView()
+        {
+            try
+            {
+                // 如果已存在旧窗口，关闭它
+                if (_operatorDisplay != null)
+                {
+                    _operatorDisplay = null;
+                }
+
+                var win = new Window
+                {
+                    Title = "运行界面 - VisionInspection",
+                    Owner = this,
+                    Width = 900, Height = 650,
+                    WindowStartupLocation = WindowStartupLocation.CenterScreen,
+                    WindowStyle = WindowStyle.SingleBorderWindow
+                };
+                win.Closed += (s2, ev2) => _operatorDisplay = null;
+
+                var grid = new Grid { Margin = new Thickness(4) };
+                grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+                var imageHost = new WindowsFormsHost();
+                _operatorDisplay = new CogRecordDisplay();
+                _operatorDisplay.Dock = System.Windows.Forms.DockStyle.Fill;
+                imageHost.Child = _operatorDisplay;
+                Grid.SetRow(imageHost, 0);
+
+                // 等 Handle 创建后再设置 ActiveX 属性和图像
+                _operatorDisplay.HandleCreated += (s3, ev3) =>
+                {
+                    _operatorDisplay.AutoFit = true;
+                    if (_simImageService.CurrentImage != null)
+                        _operatorDisplay.Image = _simImageService.CurrentImage;
+                };
+
+                var statPanel = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 6, 0, 0)
+                };
+                var txtOk = new TextBlock { Text = "OK: " + _resultService.OkCount, FontSize = 16, FontWeight = FontWeights.Bold, Foreground = Brushes.Green, Margin = new Thickness(10, 0, 10, 0) };
+                var txtNg = new TextBlock { Text = "NG: " + _resultService.NgCount, FontSize = 16, FontWeight = FontWeights.Bold, Foreground = Brushes.Red, Margin = new Thickness(10, 0, 10, 0) };
+                statPanel.Children.Add(txtOk);
+                statPanel.Children.Add(txtNg);
+                Grid.SetRow(statPanel, 1);
+
+                var btnPanel = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 6, 0, 8)
+                };
+                var btnRun = new Button { Content = "▶ 运行一次", Width = 100, Height = 32, Background = Brushes.Green, Foreground = Brushes.White, FontWeight = FontWeights.Bold };
+                btnRun.Click += (s2, ev2) =>
+                {
+                    try
+                    {
+                        RunOnce();
+                        txtOk.Text = "OK: " + _resultService.OkCount;
+                        txtNg.Text = "NG: " + _resultService.NgCount;
+                        var record = _visionService.GetLastRunRecord();
+                        if (record != null) _operatorDisplay.Record = record;
+                        else if (_simImageService.CurrentImage != null) _operatorDisplay.Image = _simImageService.CurrentImage;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logService.Error(LogCategory.SYSTEM, "System", "操作员窗口运行失败: " + ex.Message);
+                    }
+                };
+                btnPanel.Children.Add(btnRun);
+                Grid.SetRow(btnPanel, 2);
+
+                grid.Children.Add(imageHost);
+                grid.Children.Add(statPanel);
+                grid.Children.Add(btnPanel);
+                win.Content = grid;
+                win.Show();
+                win.Activate();
+            }
+            catch (Exception ex)
+            {
+                _logService.Error(LogCategory.SYSTEM, "System", "打开运行界面失败: " + ex.Message);
+            }
         }
 
         private bool CheckEngineer()

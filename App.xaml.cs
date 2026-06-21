@@ -25,15 +25,30 @@ namespace VisionInspection
             base.OnStartup(e);
             AppDomain.CurrentDomain.UnhandledException += (s, ex) =>
             {
-                MessageBox.Show("严重错误: " + (ex.ExceptionObject?.ToString() ?? "未知"),
-                    "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                string msg = ex.ExceptionObject?.ToString() ?? "未知错误";
+                LogToFile("严重错误: " + msg);
+                MessageBox.Show("严重错误: " + msg, "错误");
             };
             DispatcherUnhandledException += (s, ex) =>
             {
-                MessageBox.Show("未处理的异常: " + ex.Exception.Message,
-                    "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                LogToFile("未处理的异常: " + ex.Exception);
+                MessageBox.Show("未处理的异常: " + ex.Exception.Message, "错误");
                 ex.Handled = true;
             };
+        }
+
+        private static void LogToFile(string msg)
+        {
+            try
+            {
+                string dir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Log");
+                System.IO.Directory.CreateDirectory(dir);
+                string file = System.IO.Path.Combine(dir,
+                    string.Format("crash_{0}.log", DateTime.Now.ToString("yyyyMMdd")));
+                System.IO.File.AppendAllText(file,
+                    string.Format("[{0:yyyy-MM-dd HH:mm:ss}] {1}\n", DateTime.Now, msg));
+            }
+            catch { }
         }
 
         protected override void OnExit(ExitEventArgs e)

@@ -28,6 +28,7 @@
             <MenuItem Header="视觉工具(_V)">
                 <MenuItem Header="工具链编辑器(_E)..." Click="MenuToolEditor_Click"/>
                 <MenuItem Header="变量监视(_W)..." Click="MenuVarMonitor_Click"/>
+                <MenuItem Header="检测效果图(_R)..." Click="MenuResultViewer_Click"/>
             </MenuItem>
             <MenuItem Header="配方(_P)">
                 <MenuItem Header="新建配方(_N)..." Click="MenuRecipeNew_Click"/>
@@ -38,6 +39,7 @@
             </MenuItem>
             <MenuItem Header="通讯(_C)">
                 <MenuItem Header="TCP 通讯(_T)..." Click="MenuTcpOpen_Click"/>
+                <MenuItem Header="串口通讯(_S)..." Click="MenuSerialOpen_Click"/>
             </MenuItem>
             <MenuItem Header="用户(_U)">
                 <MenuItem Header="登录(_L)..." Click="MenuUserLogin_Click"/>
@@ -46,7 +48,11 @@
                 <Separator/>
                 <MenuItem Header="修改密码(_P)..." Click="MenuUserChPwd_Click"/>
             </MenuItem>
+            <MenuItem Header="设置(_S)">
+                <MenuItem Header="系统设置(_T)..." Click="MenuSettings_Click"/>
+            </MenuItem>
             <MenuItem Header="帮助(_H)">
+                <MenuItem Header="运行界面(_R)..." Click="MenuOperatorView_Click"/>
                 <MenuItem Header="关于(_A)..." Click="MenuHelpAbout_Click"/>
             </MenuItem>
         </Menu>
@@ -188,6 +194,7 @@
                             <CheckBox Name="ChkLogInfo" Content="信息" IsChecked="True" Margin="4,0" FontSize="10" VerticalAlignment="Center"/>
                             <CheckBox Name="ChkLogWarn" Content="警告" IsChecked="True" Margin="4,0" FontSize="10" VerticalAlignment="Center"/>
                             <CheckBox Name="ChkLogError" Content="错误" IsChecked="True" Margin="4,0" FontSize="10" VerticalAlignment="Center"/>
+                            <CheckBox Name="ChkLogDebug" Content="调试" IsChecked="False" Margin="4,0" FontSize="10" VerticalAlignment="Center" Foreground="Gray"/>
                             <Button Name="BtnLogPause" Content="暂停" Click="BtnLogPause_Click" Margin="8,0,2,0" Padding="6,2" FontSize="10"/>
                             <Button Name="BtnLogClear" Content="清空" Click="BtnLogClear_Click" Margin="2,0,6,0" Padding="6,2" FontSize="10"/>
                         </StackPanel>
@@ -220,6 +227,11 @@
             <Separator/>
             <StatusBarItem><TextBlock Name="StsFrame" Text="帧率: --" Margin="4,0"/></StatusBarItem>
             <Separator/>
+            <StatusBarItem HorizontalAlignment="Right">
+                <Button Name="BtnNotify" Content="🔔" Width="30" Height="20" FontSize="10"
+                        Click="BtnNotify_Click" ToolTip="异常通知"
+                        Foreground="#87CEEB" Background="Transparent" BorderThickness="0" Cursor="Hand"/>
+            </StatusBarItem>
             <StatusBarItem HorizontalAlignment="Right">
                 <TextBlock Name="StsUser" Text="  用户: 操作员  " Margin="4,0"/>
             </StatusBarItem>

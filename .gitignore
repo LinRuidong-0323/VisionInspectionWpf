@@ -8,3 +8,5 @@ obj/
 Log/
 Data/
 Recipe/
+*.vpp
+Config/DefaultJob.vpp

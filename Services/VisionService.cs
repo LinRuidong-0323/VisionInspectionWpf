@@ -111,6 +111,30 @@ namespace VisionInspection.Services
 
             try
             {
+                // 安全检查：如果磁盘已有文件，且当前 ToolBlock 是空的（0个工具），拒绝覆盖并警告
+                if (File.Exists(_currentJobPath))
+                {
+                    long diskSize = new FileInfo(_currentJobPath).Length;
+                    if (_toolBlock != null && _toolBlock.Tools != null && _toolBlock.Tools.Count == 0)
+                    {
+                        _logService?.Error(LogCategory.JOB, "System",
+                            string.Format("[JOB] 拒绝保存：当前 ToolBlock 无工具，磁盘文件 {0} bytes 未被覆盖。请检查作业是否正确加载。", diskSize));
+                        return false;
+                    }
+                    // 保存前自动备份（保留最近 5 个历史版本）
+                    string backupDir = Path.Combine(Path.GetDirectoryName(_currentJobPath), ".vpp_backup");
+                    Directory.CreateDirectory(backupDir);
+                    string backupFile = Path.Combine(backupDir,
+                        string.Format("{0}_{1}.vpp",
+                            Path.GetFileNameWithoutExtension(_currentJobPath),
+                            DateTime.Now.ToString("yyyyMMdd_HHmmss")));
+                    File.Copy(_currentJobPath, backupFile, true);
+                    // 只保留最近 5 个备份
+                    var backups = Directory.GetFiles(backupDir, "*.vpp").OrderByDescending(f => f).ToArray();
+                    for (int i = 5; i < backups.Length; i++)
+                        File.Delete(backups[i]);
+                }
+
                 string dir = Path.GetDirectoryName(_currentJobPath);
                 if (!string.IsNullOrEmpty(dir))
                     Directory.CreateDirectory(dir);
@@ -170,7 +194,7 @@ namespace VisionInspection.Services
                     {
                         terminal.Value = image;
                         found = true;
-                        _logService?.Info(LogCategory.JOB, "System",
+                        _logService?.Debug(LogCategory.JOB, "System",
                             string.Format("SetInputImage: 图像已设置到端子 [{0}] ({1}×{2})",
                                 terminal.Name, image.Width, image.Height));
                         break;
@@ -399,8 +423,13 @@ namespace VisionInspection.Services
                         _toolBlock = job;
                         _currentJobPath = vppFilePath;
                         InitializeEditor();
-                        _logService?.Info(LogCategory.JOB, "System",
-                            string.Format("已加载作业: {0}", vppFilePath));
+                        int toolCount = job.Tools != null ? job.Tools.Count : 0;
+                        if (toolCount == 0)
+                            _logService?.Warn(LogCategory.JOB, "System",
+                                string.Format("[JOB] 作业 '{0}' 加载成功，但工具数为 0。如果之前添加过工具，VPP 可能被覆盖了。", vppFilePath));
+                        else
+                            _logService?.Info(LogCategory.JOB, "System",
+                                string.Format("已加载作业: {0} ({1} 个工具)", Path.GetFileName(vppFilePath), toolCount));
                         OnJobChanged?.Invoke();
                         return;
                     }

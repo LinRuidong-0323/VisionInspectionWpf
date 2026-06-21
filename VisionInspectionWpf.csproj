@@ -13,6 +13,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <DebugSymbols>true</DebugSymbols>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <OutputPath>bin\Debug\net48\</OutputPath>
   </PropertyGroup>
 
   <!-- VisionPro 9.0 -->

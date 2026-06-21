@@ -55,11 +55,11 @@ namespace VisionInspection.Services
             // 加载密码配置
             LoadPasswords();
 
-            // 默认以操作员身份进入
+            // 默认以管理员身份进入
             _currentUser = new User
             {
-                UserName = "Operator",
-                Role = UserRole.Operator,
+                UserName = "Admin",
+                Role = UserRole.Admin,
                 IsEnabled = true
             };
         }

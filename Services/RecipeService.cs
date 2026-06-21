@@ -48,13 +48,52 @@ namespace VisionInspection.Services
             // 确保配方根目录存在
             Directory.CreateDirectory(_recipeRoot);
 
-            // 如果没有默认配方，创建 "1"
-            if (!Directory.Exists(Path.Combine(_recipeRoot, "1")))
+            // 自动选择初始配方
+            var existingRecipes = Directory.GetDirectories(_recipeRoot);
+            if (existingRecipes.Length > 0)
             {
+                // 有已有配方 → 用第一个（后面 RestoreFromSettings 会覆盖）
+                _currentRecipeName = Path.GetFileName(existingRecipes[0]);
+            }
+            else
+            {
+                // 完全无配方 → 创建默认 "1"
                 CreateRecipe("1");
+                _currentRecipeName = "1";
+            }
+        }
+
+        /// <summary>
+        /// 从 AppSettings 恢复上次使用的配方（若已不存在则自动选第一个可用配方）
+        /// </summary>
+        public void RestoreFromSettings(string recipeName)
+        {
+            if (!string.IsNullOrEmpty(recipeName) && RecipeExists(recipeName))
+            {
+                _currentRecipeName = recipeName;
+                return;
             }
 
-            _currentRecipeName = "1";
+            // 保存的配方不存在（可能被用户改名）：自动选第一个可用配方
+            var all = GetAllRecipes();
+            if (all.Count > 0)
+            {
+                _currentRecipeName = all[0].Name;
+                _logService?.Warn(LogCategory.RECIPE, "System",
+                    string.Format("[RECIPE] 配方 '{0}' 不存在，自动切换到 '{1}'", recipeName, _currentRecipeName));
+            }
+            else
+            {
+                // 完全没有任何配方 → 创建默认 "1"
+                CreateRecipe("1");
+                _currentRecipeName = "1";
+                _logService?.Warn(LogCategory.RECIPE, "System", "[RECIPE] 无可用配方，已创建默认配方 '1'");
+            }
+        }
+
+        private bool RecipeExists(string name)
+        {
+            return Directory.Exists(Path.Combine(_recipeRoot, name));
         }
 
         /// <summary>
@@ -74,6 +113,7 @@ namespace VisionInspection.Services
                         FolderPath = dir,
                         CreatedAt = Directory.GetCreationTime(dir),
                         VppFiles = Directory.GetFiles(dir, "*.vpp")
+                            .OrderByDescending(f => new FileInfo(f).LastWriteTime)
                             .Select(f => Path.GetFileName(f))
                             .ToList()
                     };

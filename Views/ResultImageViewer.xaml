@@ -1,0 +1,45 @@
+<Window x:Class="VisionInspection.Views.ResultImageViewer"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="检测效果图" Height="600" Width="900"
+        WindowStartupLocation="CenterOwner">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="280"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- 左侧：历史列表 -->
+        <Border Grid.Column="0" BorderBrush="#DDD" BorderThickness="0,0,1,0">
+            <DockPanel>
+                <Border DockPanel.Dock="Top" Background="#E8E8E8" Padding="8,6">
+                    <TextBlock Text="📷 检测效果图" FontWeight="Bold" FontSize="13"/>
+                </Border>
+                <ListBox Name="LstHistory" SelectionChanged="LstHistory_SelectionChanged" FontSize="11">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="2">
+                                <TextBlock Text="{Binding Time}" FontSize="10" Foreground="Gray"/>
+                                <TextBlock Text="{Binding Display}" FontSize="11"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <!-- 右侧：图像预览 -->
+        <Border Grid.Column="1" Background="#1E1E1E">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <WindowsFormsHost Name="ResultImageHost" Margin="4"/>
+                <Border Grid.Row="1" Background="#333" Padding="6">
+                    <TextBlock Name="TxtResultInfo" Text="选择左侧记录查看" Foreground="#CCC" FontSize="11"/>
+                </Border>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
